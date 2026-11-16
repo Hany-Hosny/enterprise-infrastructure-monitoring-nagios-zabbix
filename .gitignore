@@ -1,0 +1,7 @@
+*.retry
+*.log
+.DS_Store
+__pycache__/
+*.py[cod]
+group_vars/vault.yml
+.ansible/

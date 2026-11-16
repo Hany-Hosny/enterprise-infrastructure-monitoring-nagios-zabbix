@@ -1,0 +1,27 @@
+define host {
+    name                    p1-linux-host
+    register                0
+    check_period            p1-24x7
+    check_interval          5
+    retry_interval          1
+    max_check_attempts      3
+    check_command           p1_check_ping!100.0,20%!500.0,60%
+    notification_period     p1-24x7
+    notification_interval   30
+    notification_options    d,u,r
+    contact_groups          p1-ops
+    notifications_enabled   {{ 1 if nagios_notifications_enabled else 0 }}
+}
+
+{% if nagios_create_host_definitions | bool %}
+{% for host in groups['app_servers'] %}
+define host {
+    use             p1-linux-host
+    host_name       {{ host }}
+    alias           {{ hostvars[host].nagios_alias }}
+    address         {{ hostvars[host].ansible_host }}
+    hostgroups      {{ hostvars[host].nagios_hostgroups | join(',') }}
+}
+
+{% endfor %}
+{% endif %}

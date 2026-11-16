@@ -1,0 +1,23 @@
+ansible_user: vagrant
+
+nagios_config_path: /usr/local/nagios/etc/nagios.cfg
+nagios_bin: /usr/local/nagios/bin/nagios
+nagios_objects_dir: /usr/local/nagios/etc/objects
+nagios_project_config_dir: /usr/local/nagios/etc/objects/project-02
+nagios_plugins_dir: /usr/local/nagios/libexec
+nagios_zabbix_api_plugin: /usr/local/nagios/libexec/p1-check-zabbix-api.py
+nagios_service_name: nagios
+nagios_nrpe_service_name: nagios-nrpe-server
+nagios_server_address: 192.168.56.17
+
+# The known lab baseline already registers the five application hosts.
+nagios_create_host_definitions: false
+nagios_enable_nrpe_checks: false
+nagios_notifications_enabled: false
+nagios_contact_email: lab-ops@example.invalid
+zabbix_frontend_api_url: http://127.0.0.1/zabbix/api_jsonrpc.php
+zabbix_server_address: 192.168.56.17
+
+nagios_backup_root: /var/backups/nagios-project-02
+nrpe_config_path: /etc/nagios/nrpe.cfg
+nrpe_fragment_dir: /etc/nagios/nrpe.d

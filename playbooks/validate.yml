@@ -1,0 +1,13 @@
+---
+- name: Read-only validation of the installed Nagios configuration
+  hosts: nagios_servers
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Validate the active Nagios configuration
+      ansible.builtin.command:
+        argv:
+          - "{{ nagios_bin }}"
+          - -v
+          - "{{ nagios_config_path }}"
+      changed_when: false

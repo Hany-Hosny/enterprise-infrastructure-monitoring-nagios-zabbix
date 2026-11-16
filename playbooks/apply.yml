@@ -1,0 +1,298 @@
+---
+- name: Safely stage, validate, back up, and apply the Project 1 Nagios overlay
+  hosts: nagios_servers
+  become: true
+  gather_facts: true
+  vars:
+    nagios_apply_confirmed: false
+    nagios_project_marker: "PROJECT 1 NAGIOS OVERLAY"
+  pre_tasks:
+    - name: Require explicit operator confirmation
+      ansible.builtin.assert:
+        that:
+          - nagios_apply_confirmed | bool
+        fail_msg: >-
+          Re-run with -e nagios_apply_confirmed=true after reviewing the
+          current Nagios objects and the Project 1 README.
+
+    - name: Confirm the existing manual Nagios installation is present
+      ansible.builtin.stat:
+        path: "{{ nagios_config_path }}"
+      register: nagios_config_stat
+
+    - name: Stop when the expected existing installation is not found
+      ansible.builtin.assert:
+        that:
+          - nagios_config_stat.stat.exists
+          - nagios_config_stat.stat.isreg
+        fail_msg: "Expected existing Nagios config not found; this playbook never installs Nagios."
+
+    - name: Validate the current configuration before staging
+      ansible.builtin.command:
+        argv:
+          - "{{ nagios_bin }}"
+          - -v
+          - "{{ nagios_config_path }}"
+      changed_when: false
+
+    - name: Check for the NRPE client plugin when NRPE service checks are enabled
+      ansible.builtin.stat:
+        path: /usr/lib/nagios/plugins/check_nrpe
+      register: nrpe_client_plugin
+      when: nagios_enable_nrpe_checks | bool
+
+    - name: Require the NRPE client plugin for enabled NRPE checks
+      ansible.builtin.assert:
+        that: [nrpe_client_plugin.stat.exists, nrpe_client_plugin.stat.executable]
+      when: nagios_enable_nrpe_checks | bool
+
+    - name: Detect whether a prior Project 1 overlay exists
+      ansible.builtin.stat:
+        path: "{{ nagios_project_config_dir }}"
+      register: nagios_project_dir_stat
+
+    - name: Detect an existing Zabbix API plugin for rollback
+      ansible.builtin.stat:
+        path: "{{ nagios_zabbix_api_plugin }}"
+      register: nagios_plugin_stat
+
+    - name: Prepare a unique backup directory
+      ansible.builtin.set_fact:
+        nagios_backup_dir: "{{ nagios_backup_root }}/{{ ansible_date_time.iso8601_basic_short }}"
+
+  tasks:
+    - name: Apply the overlay transactionally
+      block:
+        - name: Create staging directory beside the installed config
+          ansible.builtin.tempfile:
+            state: directory
+            path: "{{ nagios_config_path | dirname }}"
+            prefix: project1-stage-
+          register: nagios_stage
+
+        - name: Create staged objects directory
+          ansible.builtin.file:
+            path: "{{ nagios_stage.path }}/objects"
+            state: directory
+            mode: "0750"
+
+        - name: Stage Nagios commands
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../files/nagios/commands.cfg"
+            dest: "{{ nagios_stage.path }}/objects/commands.cfg"
+            mode: "0640"
+
+        - name: Stage host and service groups
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../files/nagios/hostgroups.cfg"
+            dest: "{{ nagios_stage.path }}/objects/hostgroups.cfg"
+            mode: "0640"
+
+        - name: Stage escalation examples
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../files/nagios/escalations.cfg"
+            dest: "{{ nagios_stage.path }}/objects/escalations.cfg"
+            mode: "0640"
+
+        - name: Stage the Zabbix API check plugin
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../files/plugins/check_zabbix_api.py"
+            dest: "{{ nagios_stage.path }}/p1-check-zabbix-api.py"
+            mode: "0755"
+
+        - name: Render staged hosts
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/../templates/hosts.cfg.j2"
+            dest: "{{ nagios_stage.path }}/objects/hosts.cfg"
+            mode: "0640"
+
+        - name: Render staged services
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/../templates/services.cfg.j2"
+            dest: "{{ nagios_stage.path }}/objects/services.cfg"
+            mode: "0640"
+
+        - name: Render staged contacts and notification examples
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/../templates/contacts.cfg.j2"
+            dest: "{{ nagios_stage.path }}/objects/contacts.cfg"
+            mode: "0640"
+
+        - name: Create a candidate main config beside the active config
+          ansible.builtin.copy:
+            remote_src: true
+            src: "{{ nagios_config_path }}"
+            dest: "{{ nagios_stage.path }}/nagios.cfg"
+            mode: preserve
+
+        - name: Remove the previous Project 1 include from the candidate copy
+          ansible.builtin.blockinfile:
+            path: "{{ nagios_stage.path }}/nagios.cfg"
+            marker: "# {mark} {{ nagios_project_marker }}"
+            state: absent
+
+        - name: Add the staged directory to the candidate config
+          ansible.builtin.blockinfile:
+            path: "{{ nagios_stage.path }}/nagios.cfg"
+            marker: "# {mark} PROJECT 1 NAGIOS OVERLAY"
+            block: "cfg_dir={{ nagios_stage.path }}/objects"
+
+        - name: Validate candidate config before touching live config
+          ansible.builtin.command:
+            argv:
+              - "{{ nagios_bin }}"
+              - -v
+              - "{{ nagios_stage.path }}/nagios.cfg"
+          changed_when: false
+
+        - name: Create protected backup root
+          ansible.builtin.file:
+            path: "{{ nagios_backup_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+
+        - name: Back up the active main config
+          ansible.builtin.copy:
+            remote_src: true
+            src: "{{ nagios_config_path }}"
+            dest: "{{ nagios_backup_dir }}/nagios.cfg"
+            mode: preserve
+
+        - name: Back up the current Project 1 directory when it exists
+          ansible.builtin.copy:
+            remote_src: true
+            src: "{{ nagios_project_config_dir }}"
+            dest: "{{ nagios_backup_dir }}/project-02"
+            mode: preserve
+          when: nagios_project_dir_stat.stat.exists
+
+        - name: Back up an existing Zabbix API plugin when present
+          ansible.builtin.copy:
+            remote_src: true
+            src: "{{ nagios_zabbix_api_plugin }}"
+            dest: "{{ nagios_backup_dir }}/p1-check-zabbix-api.py"
+            mode: preserve
+          when: nagios_plugin_stat.stat.exists
+
+        - name: Record plugin rollback state
+          ansible.builtin.set_fact:
+            nagios_plugin_backup_created: "{{ nagios_plugin_stat.stat.exists }}"
+
+        - name: Mark the rollback point as available
+          ansible.builtin.set_fact:
+            nagios_live_backup_created: true
+
+        - name: Install the staged Zabbix API check plugin
+          ansible.builtin.copy:
+            remote_src: true
+            src: "{{ nagios_stage.path }}/p1-check-zabbix-api.py"
+            dest: "{{ nagios_zabbix_api_plugin }}"
+            owner: nagios
+            group: nagios
+            mode: "0755"
+
+        - name: Install only the Project 1-owned object files
+          ansible.builtin.copy:
+            remote_src: true
+            src: "{{ nagios_stage.path }}/objects/"
+            dest: "{{ nagios_project_config_dir }}/"
+            owner: nagios
+            group: nagios
+            mode: "0640"
+            directory_mode: "0750"
+
+        - name: Add the managed Project 1 include to the live config
+          ansible.builtin.blockinfile:
+            path: "{{ nagios_config_path }}"
+            marker: "# {mark} {{ nagios_project_marker }}"
+            block: "cfg_dir={{ nagios_project_config_dir }}"
+            backup: true
+
+        - name: Validate the promoted live configuration
+          ansible.builtin.command:
+            argv:
+              - "{{ nagios_bin }}"
+              - -v
+              - "{{ nagios_config_path }}"
+          changed_when: false
+
+        - name: Restart Nagios only after both validations pass
+          ansible.builtin.service:
+            name: "{{ nagios_service_name }}"
+            state: restarted
+
+      rescue:
+        - name: Restore the original Nagios main config
+          ansible.builtin.copy:
+            remote_src: true
+            src: "{{ nagios_backup_dir }}/nagios.cfg"
+            dest: "{{ nagios_config_path }}"
+            mode: preserve
+          when: nagios_live_backup_created | default(false) | bool
+
+        - name: Restore the old Project 1 directory when it existed
+          ansible.builtin.copy:
+            remote_src: true
+            src: "{{ nagios_backup_dir }}/project-02/"
+            dest: "{{ nagios_project_config_dir }}/"
+            mode: preserve
+            directory_mode: "0750"
+          when:
+            - nagios_live_backup_created | default(false) | bool
+            - nagios_project_dir_stat.stat.exists
+
+        - name: Remove a newly created Project 1 directory during rollback
+          ansible.builtin.file:
+            path: "{{ nagios_project_config_dir }}"
+            state: absent
+          when:
+            - nagios_live_backup_created | default(false) | bool
+            - not nagios_project_dir_stat.stat.exists
+
+        - name: Restore the previous Zabbix API plugin
+          ansible.builtin.copy:
+            remote_src: true
+            src: "{{ nagios_backup_dir }}/p1-check-zabbix-api.py"
+            dest: "{{ nagios_zabbix_api_plugin }}"
+            mode: preserve
+          when:
+            - nagios_live_backup_created | default(false) | bool
+            - nagios_plugin_backup_created | default(false) | bool
+
+        - name: Remove the newly installed Zabbix API plugin during rollback
+          ansible.builtin.file:
+            path: "{{ nagios_zabbix_api_plugin }}"
+            state: absent
+          when:
+            - nagios_live_backup_created | default(false) | bool
+            - not (nagios_plugin_stat.stat.exists | default(false))
+
+        - name: Re-validate the restored active config
+          ansible.builtin.command:
+            argv:
+              - "{{ nagios_bin }}"
+              - -v
+              - "{{ nagios_config_path }}"
+          changed_when: false
+          when: nagios_live_backup_created | default(false) | bool
+
+        - name: Restart Nagios with restored configuration
+          ansible.builtin.service:
+            name: "{{ nagios_service_name }}"
+            state: restarted
+          when: nagios_live_backup_created | default(false) | bool
+
+        - name: Report that the transaction was rolled back
+          ansible.builtin.fail:
+            msg: >-
+              Project 1 Nagios apply failed. The previous config was restored
+              from {{ nagios_backup_dir }}; review duplicate objects and logs.
+
+      always:
+        - name: Remove temporary staged candidate files
+          ansible.builtin.file:
+            path: "{{ nagios_stage.path }}"
+            state: absent
+          when: nagios_stage is defined and nagios_stage.path is defined

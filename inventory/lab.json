@@ -1,0 +1,58 @@
+{
+  "all": {
+    "children": {
+      "nagios_servers": {
+        "hosts": {
+          "monitor01": {
+            "ansible_host": "192.168.56.17",
+            "nagios_zabbix_api_host": "localhost"
+          }
+        }
+      },
+      "app_servers": {
+        "hosts": {
+          "db01": {
+            "ansible_host": "192.168.56.12",
+            "nagios_alias": "MariaDB database server",
+            "nagios_hostgroups": ["p1-linux-servers", "p1-databases"],
+            "nagios_services": [
+              {"description": "MariaDB TCP 3306", "check_command": "p1_check_tcp_port!3306"}
+            ]
+          },
+          "mc01": {
+            "ansible_host": "192.168.56.13",
+            "nagios_alias": "Memcached cache server",
+            "nagios_hostgroups": ["p1-linux-servers", "p1-caching"],
+            "nagios_services": [
+              {"description": "Memcached TCP 11211", "check_command": "p1_check_tcp_port!11211"}
+            ]
+          },
+          "rmq01": {
+            "ansible_host": "192.168.56.14",
+            "nagios_alias": "RabbitMQ message broker",
+            "nagios_hostgroups": ["p1-linux-servers", "p1-messaging"],
+            "nagios_services": [
+              {"description": "RabbitMQ AMQP TCP 5672", "check_command": "p1_check_tcp_port!5672"}
+            ]
+          },
+          "app01": {
+            "ansible_host": "192.168.56.15",
+            "nagios_alias": "Java and Tomcat application server",
+            "nagios_hostgroups": ["p1-linux-servers", "p1-application"],
+            "nagios_services": [
+              {"description": "Tomcat TCP 8080", "check_command": "p1_check_tcp_port!8080"}
+            ]
+          },
+          "web01": {
+            "ansible_host": "192.168.56.16",
+            "nagios_alias": "Nginx web server",
+            "nagios_hostgroups": ["p1-linux-servers", "p1-web"],
+            "nagios_services": [
+              {"description": "Nginx HTTP /", "check_command": "p1_check_http!80!/"}
+            ]
+          }
+        }
+      }
+    }
+  }
+}

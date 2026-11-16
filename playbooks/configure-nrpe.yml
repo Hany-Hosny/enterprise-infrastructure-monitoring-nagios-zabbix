@@ -1,0 +1,108 @@
+---
+- name: Configure bounded NRPE checks on the five existing Ubuntu application VMs
+  hosts: app_servers
+  become: true
+  gather_facts: true
+  vars:
+    nrpe_apply_confirmed: false
+  pre_tasks:
+    - name: Require explicit operator confirmation
+      ansible.builtin.assert:
+        that:
+          - nrpe_apply_confirmed | bool
+          - ansible_distribution == "Ubuntu"
+        fail_msg: >-
+          Review the Project 1 README and run with
+          -e nrpe_apply_confirmed=true on the intended Ubuntu lab VMs.
+  tasks:
+    - name: Install NRPE server and standard monitoring plugins
+      ansible.builtin.apt:
+        name:
+          - nagios-nrpe-server
+          - monitoring-plugins-basic
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+        policy_rc_d: 101
+      notify: Restart NRPE
+
+    - name: Confirm the installed NRPE config includes the managed fragment directory
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/grep
+          - -Eq
+          - "^include_dir={{ nrpe_fragment_dir }}/?$"
+          - "{{ nrpe_config_path }}"
+      changed_when: false
+
+    - name: Add the existing monitor01 address to NRPE's allowed peers
+      ansible.builtin.lineinfile:
+        path: "{{ nrpe_config_path }}"
+        regexp: "^allowed_hosts="
+        line: "allowed_hosts=127.0.0.1,{{ nagios_server_address }}"
+        backup: true
+        mode: "0640"
+      notify: Restart NRPE
+
+    - name: Create the NRPE include directory
+      ansible.builtin.file:
+        path: "{{ nrpe_fragment_dir }}"
+        state: directory
+        owner: nagios
+        group: nagios
+        mode: "0750"
+
+    - name: Install the bounded Project 1 NRPE command fragment
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/nrpe/nrpe-project.cfg"
+        dest: "{{ nrpe_fragment_dir }}/project-01.cfg"
+        owner: root
+        group: nagios
+        mode: "0640"
+      notify: Restart NRPE
+
+    - name: Install the custom memory plugin
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/plugins/check_memory.py"
+        dest: /usr/local/lib/nagios/plugins/check_memory.py
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Restart NRPE
+
+    - name: Start NRPE only after its bounded configuration is installed
+      ansible.builtin.service:
+        name: "{{ nagios_nrpe_service_name }}"
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Restart NRPE
+      ansible.builtin.service:
+        name: "{{ nagios_nrpe_service_name }}"
+        state: restarted
+
+- name: Install the NRPE client plugin on monitor01
+  hosts: nagios_servers
+  become: true
+  vars:
+    nrpe_apply_confirmed: false
+  pre_tasks:
+    - name: Require the same explicit NRPE approval
+      ansible.builtin.assert:
+        that: [nrpe_apply_confirmed | bool]
+  tasks:
+    - name: Install the distribution NRPE check plugin without starting services
+      ansible.builtin.apt:
+        name: nagios-nrpe-plugin
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+        policy_rc_d: 101
+    - name: Verify the plugin executable is available
+      ansible.builtin.stat:
+        path: /usr/lib/nagios/plugins/check_nrpe
+      register: nrpe_client_plugin
+    - name: Require the expected plugin binary
+      ansible.builtin.assert:
+        that: [nrpe_client_plugin.stat.exists, nrpe_client_plugin.stat.executable]

@@ -1,0 +1,77 @@
+define service {
+    name                    p1-generic-service
+    register                0
+    active_checks_enabled   1
+    passive_checks_enabled  0
+    check_period            p1-24x7
+    check_interval          5
+    retry_interval          1
+    max_check_attempts      3
+    notification_period     p1-24x7
+    notification_interval   30
+    notification_options    w,u,c,r
+    contact_groups          p1-ops
+    notifications_enabled   {{ 1 if nagios_notifications_enabled else 0 }}
+}
+
+{% for host in groups['app_servers'] %}
+define service {
+    use                     p1-generic-service
+    host_name               {{ host }}
+    service_description     ICMP availability
+    check_command           p1_check_ping!100.0,20%!500.0,60%
+    servicegroups           p1-connectivity
+}
+
+{% for monitored_service in hostvars[host].nagios_services %}
+define service {
+    use                     p1-generic-service
+    host_name               {{ host }}
+    service_description     {{ monitored_service.description }}
+    check_command           {{ monitored_service.check_command }}
+    servicegroups           p1-connectivity
+}
+{% endfor %}
+
+{% if nagios_enable_nrpe_checks | bool %}
+define service {
+    use                     p1-generic-service
+    host_name               {{ host }}
+    service_description     NRPE load
+    check_command           p1_check_nrpe!check_lab_load
+    servicegroups           p1-performance
+}
+
+define service {
+    use                     p1-generic-service
+    host_name               {{ host }}
+    service_description     NRPE memory utilization
+    check_command           p1_check_nrpe!check_lab_memory
+    servicegroups           p1-performance
+}
+
+define service {
+    use                     p1-generic-service
+    host_name               {{ host }}
+    service_description     NRPE root filesystem
+    check_command           p1_check_nrpe!check_lab_root_disk
+    servicegroups           p1-performance
+}
+{% endif %}
+{% endfor %}
+
+define service {
+    use                     p1-generic-service
+    host_name               {{ nagios_zabbix_api_host | default('localhost') }}
+    service_description     Zabbix API version
+    check_command           p1_check_zabbix_api!{{ zabbix_frontend_api_url }}
+    servicegroups           p1-zabbix-integration
+}
+
+define service {
+    use                     p1-generic-service
+    host_name               {{ nagios_zabbix_api_host | default('localhost') }}
+    service_description     Zabbix server TCP 10051
+    check_command           p1_check_tcp_port!10051
+    servicegroups           p1-zabbix-integration
+}
